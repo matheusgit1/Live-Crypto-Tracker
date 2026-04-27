@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: crypto_tracker
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: crypto_metrics
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    ports:
+      - "4000:4000"
+      - "4001:4001"
+    depends_on:
+      - postgres
+      - timescaledb
+      - redis
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/crypto_tracker
+      TIMESCALE_URL: postgresql://postgres:postgres@timescaledb:5432/crypto_metrics
+      REDIS_HOST: redis
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
