@@ -92,13 +92,13 @@ export default function RootLayout({
   return (
     <html lang="en" className={isDarkMode ? "dark" : ""}>
       <body className="bg-gray-900 dark:bg-gray-900">
-        <Header
+        {/* <Header
           isConnected={isConnected}
           isSidebarOpen={isSidebarOpen}
           onSidebarToggle={handleSidebarToggle}
           onThemeToggle={handleThemeToggle}
           isDarkMode={isDarkMode}
-        />
+        /> */}
         <div className="flex">
           <Sidebar
             isOpen={isSidebarOpen}
