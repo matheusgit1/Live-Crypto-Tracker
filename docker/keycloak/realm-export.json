@@ -1,0 +1,48 @@
+{
+  "realm": "crypto-tracker",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 86.400,
+  "clients": [
+    {
+      "clientId": "crypto-tracker-client",
+      "name": "Crypto Tracker Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "trader",
+      "email": "trader@crypto-tracker.dev",
+      "firstName": "Trader",
+      "lastName": "teste",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "trader123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

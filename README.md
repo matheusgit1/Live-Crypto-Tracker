@@ -18,6 +18,7 @@
 - [Arquitetura](#️-arquitetura)
 - [Tech Stack](#-tech-stack)
 - [Funcionalidades](#-funcionalidades)
+- [Autenticação com Keycloak](#-autenticação-com-keycloak)
 - [Instalação](#-instalação)
 - [Serviços e Portas](#-serviços-e-portas)
 - [API & WebSocket](#-api--websocket)
@@ -59,11 +60,14 @@ Plataforma de tracking de criptomoedas em **tempo real** que consome dados diret
 ┌─────────────────────────────────────┐
 │  Frontend (Next.js)                 │
 │  TradingView Lightweight Charts     │
+│  Keycloak JS Adapter               │
 └─────────────────┬───────────────────┘
                   │ WebSocket (Socket.io)
+                  │ OpenID Connect (OAuth2)
 ┌─────────────────▼───────────────────┐
 │  NestJS WebSocket Gateway           │
 │  (Price feed + Alert broadcaster)   │
+│  Keycloak Integration               │
 └─────────────────┬───────────────────┘
                   │
       ┌───────────┼───────────┐
@@ -73,6 +77,11 @@ Plataforma de tracking de criptomoedas em **tempo real** que consome dados diret
  │ WebSocket│ │ (Cache +│ │ (Histórico) │
  │ (Stream) │ │ Queues) │ └─────────────┘
  └──────────┘ └─────────┘
+
+ ┌─────────────────────────────────────┐
+ │  Keycloak Identity Provider         │
+ │  (Authentication & Authorization)   │
+ └─────────────────────────────────────┘
 
 ┌──────────────────────────────────────┐
 │  BullMQ Worker                       │
@@ -94,8 +103,8 @@ Plataforma de tracking de criptomoedas em **tempo real** que consome dados diret
 | **Database** | PostgreSQL + TimescaleDB | Time-series otimizado |
 | **Cache** | Redis | Preços + filas |
 | **Queue** | BullMQ | Processamento assíncrono |
+| **Identity Provider** | Keycloak | Autenticação OpenID Connect |
 | **External** | Binance API | Dados de mercado |
-| **Auth** | JWT | Autenticação |
 | **Infra** | Docker Compose | Containerização |
 
 ---
@@ -130,7 +139,80 @@ Plataforma de tracking de criptomoedas em **tempo real** que consome dados diret
 
 ---
 
-## � Instalação
+## 🔐 Autenticação com Keycloak
+
+O sistema utiliza **Keycloak** como Identity Provider (IdP) para autenticação e autorização baseada em **OpenID Connect**.
+
+### Configuração do Realm
+
+O projeto inclui uma configuração pré-definida do Keycloak no arquivo `docker/keycloak/realm-export.json`:
+
+```json
+{
+  "realm": "crypto-tracker",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 86400,
+  "clients": [
+    {
+      "clientId": "crypto-tracker-client",
+      "name": "Crypto Tracker Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "trader",
+      "email": "trader@crypto-tracker.dev",
+      "firstName": "Trader",
+      "lastName": "teste",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "trader123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Usuário de Teste
+
+- **Username:** `trader`
+- **Email:** `trader@crypto-tracker.dev`
+- **Password:** `trader123`
+
+### Acesso ao Keycloak Admin Console
+
+- **URL:** [http://localhost:8080](http://localhost:8080)
+- **Username:** `admin`
+- **Password:** `admin`
+
+---
+
+## 💻 Instalação
 
 ### Pré-requisitos
 
@@ -157,7 +239,12 @@ docker-compose up -d
 # 4. Acesse a aplicação
 open http://localhost:3000
 
-# 5. Para desenvolvimento local (opcional)
+# 5. (Opcional) Acesse o Keycloak Admin Console
+# URL: http://localhost:8080
+# Username: admin
+# Password: admin
+
+# 6. Para desenvolvimento local (opcional)
 # Backend (porta 4000)
 cd backend && bun install && bun run dev
 
@@ -172,6 +259,7 @@ cd frontend && npm install && npm run dev
 | Frontend | `3000` | [http://localhost:3000](http://localhost:3000) |
 | Backend API | `4000` | [http://localhost:4000/api](http://localhost:4000/api) |
 | WebSocket | `4001` | `ws://localhost:4001` |
+| Keycloak | `8080` | [http://localhost:8080](http://localhost:8080) |
 | PostgreSQL | `5432` | `localhost:5432` |
 | Redis | `6379` | `localhost:6379` |
 | TimescaleDB | `5433` | `localhost:5433` |
@@ -187,9 +275,9 @@ cd frontend && npm install && npm run dev
 | `GET` | `/api/prices/latest` | Últimos preços de todas moedas | ❌ |
 | `GET` | `/api/prices/:symbol` | Último preço de uma moeda | ❌ |
 | `GET` | `/api/history/:symbol` | Histórico de preços (query: from, to, interval) | ❌ |
-| `POST` | `/api/alerts` | Criar novo alerta | ✅ JWT |
-| `GET` | `/api/alerts` | Listar alertas do usuário | ✅ JWT |
-| `DELETE` | `/api/alerts/:id` | Remover alerta | ✅ JWT |
+| `POST` | `/api/alerts` | Criar novo alerta | ✅ OpenID Connect |
+| `GET` | `/api/alerts` | Listar alertas do usuário | ✅ OpenID Connect |
+| `DELETE` | `/api/alerts/:id` | Remover alerta | ✅ OpenID Connect |
 | `POST` | `/api/auth/register` | Registrar usuário | ❌ |
 | `POST` | `/api/auth/login` | Login (retorna JWT) | ❌ |
 
@@ -246,6 +334,9 @@ live-crypto-tracker/
 │   ├── Dockerfile
 │   └── package.json
 ├── docker-compose.yml
+├── docker/
+│   └── keycloak/
+│       └── realm-export.json          # Configuração do realm Keycloak
 ├── .env.example
 └── README.md
 ```
@@ -386,6 +477,34 @@ export function useWebSocket(symbols: string[]) {
 }
 ```
 
+### Keycloak Integration (Frontend)
+
+```typescript
+// utils/keycloak.ts
+import Keycloak from 'keycloak-js';
+
+const keycloakConfig = {
+  url: process.env.NEXT_PUBLIC_KEYCLOAK_URL,
+  realm: process.env.NEXT_PUBLIC_KEYCLOAK_REALM,
+  clientId: process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID,
+};
+
+const keycloak = new Keycloak(keycloakConfig);
+
+export default keycloak;
+```
+
+### Keycloak Guard (Backend)
+
+```typescript
+// auth/keycloak.guard.ts
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Injectable()
+export class KeycloakAuthGuard extends AuthGuard('keycloak') {}
+```
+
 ---
 
 ## 📝 Variáveis de Ambiente
@@ -402,7 +521,11 @@ TIMESCALE_URL=postgresql://postgres:postgres@localhost:5433/crypto_metrics
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-JWT_SECRET=your-super-secret-key-change-this
+# Keycloak Configuration
+KEYCLOAK_AUTH_SERVER_URL=http://localhost:8080
+KEYCLOAK_REALM=crypto-tracker
+KEYCLOAK_CLIENT_ID=crypto-tracker-client
+KEYCLOAK_CLIENT_SECRET=your-client-secret-here
 
 EMAIL_HOST=smtp.gmail.com
 EMAIL_USER=your-email@gmail.com
@@ -414,6 +537,11 @@ EMAIL_PASS=your-app-password
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:4000/api
 NEXT_PUBLIC_WS_URL=ws://localhost:4001/prices
+
+# Keycloak Configuration
+NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
+NEXT_PUBLIC_KEYCLOAK_REALM=crypto-tracker
+NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=crypto-tracker-client
 ```
 
 ---
@@ -428,7 +556,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:4001/prices
 - [ ] Notificações WebSocket push
 - [ ] Histórico de preços no TimescaleDB
 - [ ] Screener (top gainers/losers)
-- [ ] Autenticação JWT
+- [ ] Autenticação OpenID Connect (Keycloak)
 - [ ] Containerização com Docker
 - [ ] Testes unitários
 - [ ] Documentação Swagger
