@@ -38,13 +38,13 @@ async function bootstrap() {
   //   }),
   // );
 
-  await app.listen(process.env.PORT ?? 4001, () => {
-    logger.log(`Server is running on port ${process.env.PORT ?? 4001}`);
+  await app.listen(process.env.PORT ?? 4000, () => {
+    logger.log(`Server is running on port ${process.env.PORT ?? 4000}`);
     logger.log(
-      `WebSocket is running on: ws://localhost:${process.env.PORT ?? 4001}/prices`,
+      `WebSocket is running on: ws://localhost:${process.env.PORT ?? 4000}/prices`,
     );
     logger.log(
-      `Swagger docs available at http://localhost:${process.env.PORT ?? 4001}/${endpoint}`,
+      `Swagger docs available at http://localhost:${process.env.PORT ?? 4000}/${endpoint}`,
     );
   });
 }

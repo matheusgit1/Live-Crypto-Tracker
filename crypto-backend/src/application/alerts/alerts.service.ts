@@ -3,6 +3,7 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import type { PriceData } from '@/infrastructure/binance/binance.types';
+// import type { PriceData } from '@/infrastructure/binance/binance.types';
 
 @Injectable()
 export class AlertsService {

@@ -1,202 +1,208 @@
-
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import WebSocket from 'ws';
-import { BinanceTrade, BinanceTicker, PriceData } from './binance.types';
+import { BinanceTicker, BinanceTrade } from './binance.types';
 
 @Injectable()
 export class BinanceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BinanceService.name);
-  private ws: WebSocket | null = null;
-  private reconnectAttempts = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 10;
-  private readonly RECONNECT_DELAY = 5000;
-  private isSubscribed = false;
+  private socket: WebSocket | null = null;
+  private reconnectTimeout?: NodeJS.Timeout;
+  private isConnected = false;
+  private readonly WS_URL = 'wss://stream.binance.com:9443/ws';
 
-  // Lista de símbolos que vamos monitorar
-  private readonly SYMBOLS = ['btcusdt', 'ethusdt', 'solusdt', 'adausdt', 'dogeusdt'];
-  
-  // Cache de preços atuais
-  private currentPrices: Map<string, PriceData> = new Map();
+  private readonly SYMBOLS = [
+    'btcusdt',
+    'ethusdt',
+    'solusdt',
+    'adausdt',
+    'dogeusdt',
+    'xrpusdt',
+    'ltcusdt',
+    'bnbusdt',
+  ];
 
-  constructor(private eventEmitter: EventEmitter2) {}
+  private readonly STREAMS = [
+    '@trade',
+    '@ticker',
+    '@depth5',
+  ];
 
-  async onModuleInit() {
+  onModuleInit() {
     this.connect();
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     this.disconnect();
   }
 
   private connect() {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.logger.warn('WebSocket already connected');
-      return;
-    }
+    const streams = this.SYMBOLS.flatMap((symbol) =>
+      this.STREAMS.map((stream) => `${symbol}${stream}`),
+    );
+    const streamUrl = `${this.WS_URL}/${streams.join('/')}`;
 
-    this.logger.log('Connecting to Binance WebSocket...');
-    this.ws = new WebSocket('wss://stream.binance.com:9443/ws');
+    this.logger.log(`Conectando ao Binance WebSocket: ${streamUrl}`);
+    this.socket = new WebSocket(streamUrl);
 
-    this.ws.on('open', () => {
-      this.logger.log('✅ Connected to Binance WebSocket');
-      this.reconnectAttempts = 0;
-      this.subscribe();
+    this.socket.on('open', () => {
+      this.logger.log('✅ Binance WebSocket conectado com sucesso');
+      this.isConnected = true;
     });
 
-    this.ws.on('message', (data: Buffer) => {
-      this.handleMessage(data.toString());
+    this.socket.on('message', (data) => {
+      const payload = data.toString();
+      this.handleMessage(payload);
     });
 
-    this.ws.on('error', (error) => {
-      this.logger.error(`WebSocket error: ${error.message}`);
+    this.socket.on('close', (code, reason) => {
+      this.logger.warn(
+        `❌ Binance WebSocket desconectado (code=${code}, reason=${reason?.toString() || 'nenhum'})`,
+      );
+      this.isConnected = false;
+      this.scheduleReconnect();
     });
 
-    this.ws.on('close', (code, reason) => {
-      this.logger.warn(`WebSocket closed: ${code} - ${reason}`);
-      this.reconnect();
+    this.socket.on('error', (error) => {
+      this.logger.error('Erro no Binance WebSocket', error as Error);
+      this.scheduleReconnect();
     });
   }
 
-  private subscribe() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.error('Cannot subscribe: WebSocket not open');
+  private subscribeToStreams(streams: string[]) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      this.logger.warn(
+        'Não foi possível subscrever: WebSocket não está conectado',
+      );
       return;
     }
 
-    // Subscribe to trade streams
-    const tradeParams = this.SYMBOLS.map(s => `${s}@trade`);
-    const tradeSubscribeMsg = {
+    const subscribeMsg = {
       method: 'SUBSCRIBE',
-      params: tradeParams,
-      id: 1,
-    };
-    this.ws.send(JSON.stringify(tradeSubscribeMsg));
-    this.logger.log(`Subscribed to trades: ${tradeParams.join(', ')}`);
-
-    // Subscribe to 24hr ticker streams
-    const tickerParams = this.SYMBOLS.map(s => `${s}@ticker`);
-    const tickerSubscribeMsg = {
-      method: 'SUBSCRIBE',
-      params: tickerParams,
-      id: 2,
-    };
-    this.ws.send(JSON.stringify(tickerSubscribeMsg));
-    this.logger.log(`Subscribed to tickers: ${tickerParams.join(', ')}`);
-  }
-
-  private handleMessage(rawData: string) {
-    try {
-      const data = JSON.parse(rawData);
-
-      // Handle subscription response
-      if (data.result === null && data.id) {
-        if (!this.isSubscribed) {
-          this.logger.log(`✅ Subscribed to streams: ${data.params?.join(', ')}`);
-          this.isSubscribed = true;
-        }
-        return;
-      }
-
-      // Handle trade events
-      if (data.e === 'trade') {
-        this.handleTrade(data as BinanceTrade);
-      }
-      
-      // Handle 24hr ticker events
-      if (data.e === '24hrTicker') {
-        this.handleTicker(data as BinanceTicker);
-      }
-    } catch (error: any) {
-      this.logger.error(`Error handling message: ${error.message}`);
-    }
-  }
-
-  private handleTrade(trade: BinanceTrade) {
-    const symbol = trade.s.replace('USDT', '');
-    const price = parseFloat(trade.p);
-    const timestamp = trade.T;
-
-    // Update cached price
-    const existing = this.currentPrices.get(symbol) || {
-      symbol,
-      price: 0,
-      change24h: 0,
-      volume24h: 0,
-      high24h: 0,
-      low24h: 0,
-      timestamp: 0,
+      params: streams,
+      id: Date.now(),
     };
 
-    existing.price = price;
-    existing.timestamp = timestamp;
-    this.currentPrices.set(symbol, existing);
-
-    // Emit event for real-time price updates
-    this.eventEmitter.emit('price.update', {
-      symbol,
-      price,
-      timestamp,
-    });
+    this.socket.send(JSON.stringify(subscribeMsg));
+    this.logger.log(`📡 Subscribed to streams: ${streams.join(', ')}`);
   }
 
-  private handleTicker(ticker: BinanceTicker) {
-    const symbol = ticker.s.replace('USDT', '');
-    const price = parseFloat(ticker.c);
-    const change24h = parseFloat(ticker.P);
-    const volume24h = parseFloat(ticker.v);
-    const high24h = parseFloat(ticker.h);
-    const low24h = parseFloat(ticker.l);
-    const timestamp = ticker.E;
-
-    // Update cached price with 24h stats
-    const existing = this.currentPrices.get(symbol) || {
-      symbol,
-      price: 0,
-      change24h: 0,
-      volume24h: 0,
-      high24h: 0,
-      low24h: 0,
-      timestamp: 0,
-    };
-
-    existing.price = price;
-    existing.change24h = change24h;
-    existing.volume24h = volume24h;
-    existing.high24h = high24h;
-    existing.low24h = low24h;
-    existing.timestamp = timestamp;
-    this.currentPrices.set(symbol, existing);
-
-    // Emit event for complete price data
-    this.eventEmitter.emit('price.full', this.currentPrices.get(symbol));
-  }
-
-  private reconnect() {
-    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-      this.logger.error('Max reconnection attempts reached. Giving up.');
+  private unsubscribeFromStreams(streams: string[]) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    this.reconnectAttempts++;
-    this.logger.log(`Reconnecting in ${this.RECONNECT_DELAY}ms... (Attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`);
-    
-    setTimeout(() => this.connect(), this.RECONNECT_DELAY);
+    const unsubscribeMsg = {
+      method: 'UNSUBSCRIBE',
+      params: streams,
+      id: Date.now(),
+    };
+
+    this.socket.send(JSON.stringify(unsubscribeMsg));
+    this.logger.log(`📡 Unsubscribed from streams: ${streams.join(', ')}`);
+  }
+
+  addSymbol(symbol: string) {
+    const lowerSymbol = symbol.toLowerCase();
+    if (!this.SYMBOLS.includes(lowerSymbol)) {
+      const streamsToAdd = this.STREAMS.map(
+        (stream) => `${lowerSymbol}${stream}`,
+      );
+      this.subscribeToStreams(streamsToAdd);
+    }
+  }
+
+  removeSymbol(symbol: string) {
+    const lowerSymbol = symbol.toLowerCase();
+    const streamsToRemove = this.STREAMS.map(
+      (stream) => `${lowerSymbol}${stream}`,
+    );
+    this.unsubscribeFromStreams(streamsToRemove);
   }
 
   private disconnect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
     }
-    this.isSubscribed = false;
+
+    if (this.socket) {
+      this.logger.log('Fechando conexão com Binance WebSocket');
+      this.socket.removeAllListeners();
+      this.socket.close();
+      this.socket = null;
+    }
+
+    this.isConnected = false;
   }
 
-  getCurrentPrices(): PriceData[] {
-    return Array.from(this.currentPrices.values());
+  private scheduleReconnect() {
+    if (this.reconnectTimeout) {
+      return;
+    }
+
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = undefined;
+      this.logger.log('Tentando reconectar ao Binance WebSocket...');
+      this.connect();
+    }, 5000);
   }
 
-  getPrice(symbol: string): PriceData | undefined {
-    return this.currentPrices.get(symbol);
+  private handleMessage(payload: string) {
+    try {
+      const data = JSON.parse(payload);
+
+      // Verificar se é uma resposta de SUBSCRIBE/UNSUBSCRIBE
+      if (data.result === null && data.id) {
+        this.logger.log(
+          `✅ ${data.method} sucesso: ${data.params?.join(', ')}`,
+        );
+        return;
+      }
+
+      this.processEvent(data);
+    } catch (error) {
+      this.logger.error(
+        'Falha ao processar mensagem do Binance WebSocket',
+        error as Error,
+      );
+    }
+  }
+
+  private processEvent(event: any) {
+    // Ticker 24h
+    if (event.e === '24hrTicker') {
+      const ticker = event as BinanceTicker;
+      this.logger.log(
+        `📊 Ticker ${ticker.s}: price=${ticker.c} | change=${ticker.P}% | volume=${ticker.v}`,
+      );
+
+      // TODO: Emitir evento para outros serviços
+      // this.eventEmitter.emit('price.update', this.formatTicker(ticker));
+      return;
+    }
+
+    // Trade
+    if (event.e === 'trade') {
+      const trade = event as BinanceTrade;
+      this.logger.log(`💰 Trade ${trade.s}: price=${trade.p} | qty=${trade.q}`);
+
+      // TODO: Emitir evento para outros serviços
+      // this.eventEmitter.emit('trade.update', trade);
+      return;
+    }
+
+    // Depth (ordens)
+    if (event.e === 'depthUpdate') {
+      this.logger.log(`📚 Depth update for ${event.s}`);
+      // TODO: Processar book de ofertas
+      return;
+    }
+
+    // Outros eventos
+    this.logger.debug(`📨 Evento recebido: ${event.e || 'unknown'}`, event);
   }
 }

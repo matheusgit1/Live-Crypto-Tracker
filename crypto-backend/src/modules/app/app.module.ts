@@ -11,8 +11,9 @@ import { AuthGuard } from '@/application/auth/auth.guard';
 import { ResponseInterceptor } from '@/interceptor/response.interceptor';
 import { KeycloakModule } from '@/infrastructure/keycloack/keycloack.module';
 import { BullModule } from '@nestjs/bull';
-import { BinanceModule } from '@/infrastructure/binance/binance.module';
+// import { BinanceModule } from '@/infrastructure/binance/binance.module';
 import { AlertsModule } from '@/application/alerts/alerts.module';
+import { BinanceModule } from '@/infrastructure/binance/binance.module';
 
 @Module({
   imports: [
