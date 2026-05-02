@@ -29,21 +29,27 @@ services:
       POSTGRES_PASSWORD: postgres
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    ports:
-      - "5433:5432"
+    image: timescale/timescaledb:latest-pg14
+    container_name: crypto_timescaledb
     environment:
-      POSTGRES_DB: crypto_metrics
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: crypto_tracker
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    container_name: crypto_redis
     ports:
       - "6379:6379"
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    build: ./crypto-backend
     ports:
       - "4000:4000"
       - "4001:4001"

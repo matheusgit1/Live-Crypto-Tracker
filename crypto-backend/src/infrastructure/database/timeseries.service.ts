@@ -34,6 +34,7 @@ export class TimeSeriesService {
   @OnEvent('price.update')
   async savePrice(priceData: PriceData) {
     try {
+      console.log('Received price update event:', priceData);
       // Salva preço pontual
       const price = this.priceRepository.create({
         id: uuidv4(),
@@ -44,7 +45,7 @@ export class TimeSeriesService {
         high24h: priceData.high24h,
         low24h: priceData.low24h,
         open24h: priceData.price, // Simplificado
-        timestamp: new Date(priceData.timestamp),
+        timestamp: new Date(priceData.timestamp).toISOString(),
       });
 
       await this.priceRepository.save(price);

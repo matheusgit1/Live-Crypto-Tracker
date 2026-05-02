@@ -10,10 +10,10 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuthGuard } from '@/application/auth/auth.guard';
 import { ResponseInterceptor } from '@/interceptor/response.interceptor';
 import { KeycloakModule } from '@/infrastructure/keycloack/keycloack.module';
-import { BullModule } from '@nestjs/bull';
-// import { BinanceModule } from '@/infrastructure/binance/binance.module';
 import { AlertsModule } from '@/application/alerts/alerts.module';
 import { BinanceModule } from '@/infrastructure/binance/binance.module';
+import { DatabaseModule } from '@/infrastructure/database/database.module';
+import { BullModule2 } from '@/infrastructure/bull/bull.module';
 
 @Module({
   imports: [
@@ -21,14 +21,10 @@ import { BinanceModule } from '@/infrastructure/binance/binance.module';
     CryptoModule,
     AuthenticationModule,
     KeycloakModule,
-    BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-      },
-    }),
+    BullModule2,
     BinanceModule,
     AlertsModule,
+    DatabaseModule,
   ],
   controllers: [AppController],
   providers: [

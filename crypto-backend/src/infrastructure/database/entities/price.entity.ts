@@ -1,9 +1,16 @@
-import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryColumn,
+  Index,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 
 @Entity('prices')
 @Index(['symbol', 'timestamp'])
 export class PriceEntity {
-  @PrimaryColumn()
+  @PrimaryColumn({ type: 'uuid' })
   id: string;
 
   @Column()
@@ -30,6 +37,11 @@ export class PriceEntity {
   @Column({ type: 'timestamp' })
   timestamp: Date;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn()
+  // @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }):
   createdAt: Date;
+
+  @UpdateDateColumn()
+  // @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }):
+  updatedAt: Date;
 }

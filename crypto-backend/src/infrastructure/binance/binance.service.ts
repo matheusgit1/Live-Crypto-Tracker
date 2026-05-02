@@ -1,9 +1,10 @@
 import {
   Injectable,
   Logger,
-  OnModuleDestroy,
   OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import WebSocket from 'ws';
 import { BinanceTicker, BinanceTrade } from './binance.types';
 
@@ -26,11 +27,9 @@ export class BinanceService implements OnModuleInit, OnModuleDestroy {
     'bnbusdt',
   ];
 
-  private readonly STREAMS = [
-    '@trade',
-    '@ticker',
-    '@depth5',
-  ];
+  private readonly STREAMS = ['@trade', '@ticker', '@depth5'];
+
+  constructor(private eventEmitter: EventEmitter2) {}
 
   onModuleInit() {
     this.connect();
@@ -73,11 +72,89 @@ export class BinanceService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private handleMessage(payload: string) {
+    try {
+      const data = JSON.parse(payload);
+
+      if (data.result === null && data.id) {
+        this.logger.log(
+          `✅ ${data.method} sucesso: ${data.params?.join(', ')}`,
+        );
+        return;
+      }
+
+      this.processEvent(data);
+    } catch (error) {
+      this.logger.error('Falha ao processar mensagem', error as Error);
+    }
+  }
+
+  private processEvent(event: any) {
+    // Ticker 24h - ESSE É O MAIS IMPORTANTE PARA PREÇOS
+    if (event.e === '24hrTicker') {
+      const ticker = event as BinanceTicker;
+      const symbol = ticker.s.replace('USDT', '');
+
+      // Prepara dados para salvar
+      const priceData = {
+        symbol,
+        price: parseFloat(ticker.c),
+        change24h: parseFloat(ticker.P),
+        volume24h: parseFloat(ticker.v),
+        high24h: parseFloat(ticker.h),
+        low24h: parseFloat(ticker.l),
+        timestamp: ticker.E,
+      };
+
+      // Salva no TimescaleDB via evento
+      this.eventEmitter.emit('price.update', priceData);
+
+      // Também emite para WebSocket clients
+      this.eventEmitter.emit('price.broadcast', priceData);
+
+      this.logger.debug(
+        `📊 ${symbol}: $${priceData.price} (${priceData.change24h}%)`,
+      );
+      return;
+    }
+
+    // Trade - útil para volume em tempo real
+    if (event.e === 'trade') {
+      const trade = event as BinanceTrade;
+      this.eventEmitter.emit('trade.update', {
+        symbol: trade.s.replace('USDT', ''),
+        price: parseFloat(trade.p),
+        quantity: parseFloat(trade.q),
+        timestamp: trade.T,
+      });
+      return;
+    }
+
+    // Depth - útil para liquidez
+    if (event.e === 'depthUpdate') {
+      this.eventEmitter.emit('depth.update', {
+        symbol: event.s.replace('USDT', ''),
+        bids: event.b,
+        asks: event.a,
+        timestamp: event.E,
+      });
+      return;
+    }
+  }
+
+  // Métodos públicos
+  addSymbol(symbol: string) {
+    const lowerSymbol = symbol.toLowerCase();
+    if (!this.SYMBOLS.includes(lowerSymbol)) {
+      const streamsToAdd = this.STREAMS.map(
+        (stream) => `${lowerSymbol}${stream}`,
+      );
+      this.subscribeToStreams(streamsToAdd);
+    }
+  }
+
   private subscribeToStreams(streams: string[]) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      this.logger.warn(
-        'Não foi possível subscrever: WebSocket não está conectado',
-      );
       return;
     }
 
@@ -103,17 +180,6 @@ export class BinanceService implements OnModuleInit, OnModuleDestroy {
     };
 
     this.socket.send(JSON.stringify(unsubscribeMsg));
-    this.logger.log(`📡 Unsubscribed from streams: ${streams.join(', ')}`);
-  }
-
-  addSymbol(symbol: string) {
-    const lowerSymbol = symbol.toLowerCase();
-    if (!this.SYMBOLS.includes(lowerSymbol)) {
-      const streamsToAdd = this.STREAMS.map(
-        (stream) => `${lowerSymbol}${stream}`,
-      );
-      this.subscribeToStreams(streamsToAdd);
-    }
   }
 
   removeSymbol(symbol: string) {
@@ -125,84 +191,21 @@ export class BinanceService implements OnModuleInit, OnModuleDestroy {
   }
 
   private disconnect() {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
     if (this.socket) {
-      this.logger.log('Fechando conexão com Binance WebSocket');
       this.socket.removeAllListeners();
       this.socket.close();
       this.socket = null;
     }
-
     this.isConnected = false;
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimeout) {
-      return;
-    }
-
+    if (this.reconnectTimeout) return;
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = undefined;
-      this.logger.log('Tentando reconectar ao Binance WebSocket...');
+      this.logger.log('Tentando reconectar...');
       this.connect();
     }, 5000);
-  }
-
-  private handleMessage(payload: string) {
-    try {
-      const data = JSON.parse(payload);
-
-      // Verificar se é uma resposta de SUBSCRIBE/UNSUBSCRIBE
-      if (data.result === null && data.id) {
-        this.logger.log(
-          `✅ ${data.method} sucesso: ${data.params?.join(', ')}`,
-        );
-        return;
-      }
-
-      this.processEvent(data);
-    } catch (error) {
-      this.logger.error(
-        'Falha ao processar mensagem do Binance WebSocket',
-        error as Error,
-      );
-    }
-  }
-
-  private processEvent(event: any) {
-    // Ticker 24h
-    if (event.e === '24hrTicker') {
-      const ticker = event as BinanceTicker;
-      this.logger.log(
-        `📊 Ticker ${ticker.s}: price=${ticker.c} | change=${ticker.P}% | volume=${ticker.v}`,
-      );
-
-      // TODO: Emitir evento para outros serviços
-      // this.eventEmitter.emit('price.update', this.formatTicker(ticker));
-      return;
-    }
-
-    // Trade
-    if (event.e === 'trade') {
-      const trade = event as BinanceTrade;
-      this.logger.log(`💰 Trade ${trade.s}: price=${trade.p} | qty=${trade.q}`);
-
-      // TODO: Emitir evento para outros serviços
-      // this.eventEmitter.emit('trade.update', trade);
-      return;
-    }
-
-    // Depth (ordens)
-    if (event.e === 'depthUpdate') {
-      this.logger.log(`📚 Depth update for ${event.s}`);
-      // TODO: Processar book de ofertas
-      return;
-    }
-
-    // Outros eventos
-    this.logger.debug(`📨 Evento recebido: ${event.e || 'unknown'}`, event);
   }
 }
